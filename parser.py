@@ -57,6 +57,10 @@ def ip_to_int(ip):
     return struct.unpack("!I", socket.inet_aton(ip))[0]
 
 
+def int_to_ip(ip):
+    return socket.inet_ntoa(struct.pack("!I", ip))
+
+
 def is_ip_in_bgp_table(ip):
     """Warning: This will mutate the table to improve performance.
 
@@ -122,5 +126,6 @@ if __name__ == '__main__':
             print "%s in route %s from table %s" % (ip, route, table)
             good_ips.append(ip)
 
+    print "Illegal IPs: %s" % [int_to_ip(ip) for ip in illegal_ips]
     print "Illegal IPs: %s" % len(illegal_ips)
     print "Good IPs: %s" % len(good_ips)
