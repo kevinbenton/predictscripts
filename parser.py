@@ -6,7 +6,8 @@
 #
 
 from collections import defaultdict
-#import netaddr
+# would be much easier with this library, but not present on PREDICT
+# import netaddr  # noqa
 import json
 import socket
 import struct
@@ -22,7 +23,7 @@ def build_bgp_table():
         for line in fh:
             cidr, interface = line.split(',')
             interface = interface.rstrip()
-            #BGP_TABLE[interface].append(netaddr.IPNetwork(cidr))
+            # BGP_TABLE[interface].append(netaddr.IPNetwork(cidr))
             BGP_TABLE[interface].append(IntegerRange.from_cidr(cidr))
     print "BGP Table built."
     for interface, table in BGP_TABLE.iteritems():
@@ -106,6 +107,8 @@ def get_all_ip_integers(flowfile):
 
 
 route_views_cache = {}
+
+
 def get_route_views_as(ip):
     global route_views_cache
     intip = ip_to_int(ip)
@@ -113,7 +116,8 @@ def get_route_views_as(ip):
         with open('routeviews-rv2-20140320-1200.pfx2as', 'r') as fh:
             for l in fh:
                 net, mask, AS = l.split()
-                route_views_cache[IntegerRange.from_cidr('%s/%s' % (net, mask))] = AS
+                route_views_cache[
+                    IntegerRange.from_cidr('%s/%s' % (net, mask))] = AS
     for r, AS in route_views_cache.iteritems():
         if r.end < intip:
             return 'NA'
@@ -155,15 +159,15 @@ class IPInfo(object):
             if range.contains(ip_to_int(ip_addr)):
                 return info
         command = '/usr/bin/whois -h whois.cymru.com " -v %s"' % ip_addr
-        resp, err = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True
-            ).communicate()
+        resp, err = subprocess.Popen(command, stdout=subprocess.PIPE,
+                                     shell=True).communicate()
         resp = resp.splitlines().pop()
         parts = map(lambda x: x.strip(), resp.split('|')[0:7])
         cidr = parts[2]
         if '/' in cidr:
             prefix_cache[IntegerRange.from_cidr(cidr)] = parts
         else:
-            print "no cidr found in response for %s: %s" %(ip_addr, resp)
+            print "no cidr found in response for %s: %s" % (ip_addr, resp)
             parts[0] = get_route_views_as(ip_addr)
         flush_cache()
         return parts
