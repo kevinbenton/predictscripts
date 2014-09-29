@@ -7,8 +7,11 @@
 
 from collections import defaultdict
 #import netaddr
+import json
 import socket
 import struct
+import subprocess
+import sys
 
 BGP_TABLE = defaultdict(list)
 
@@ -102,9 +105,80 @@ def get_all_ip_integers(flowfile):
     return all_ip_integers
 
 
+route_views_cache = {}
+def get_route_views_as(ip):
+    global route_views_cache
+    intip = ip_to_int(ip)
+    if not route_views_cache:
+        with open('routeviews-rv2-20140320-1200.pfx2as', 'r') as fh:
+            for l in fh:
+                net, mask, AS = l.split()
+                route_views_cache[IntegerRange.from_cidr('%s/%s' % (net, mask))] = AS
+    for r, AS in route_views_cache.iteritems():
+        if r.end < intip:
+            return 'NA'
+        if r.contains(intip):
+            return AS
+    return 'NA'
+
+
+try:
+    with open('whoiscache.json', 'r') as fh:
+        cidr_cache = json.loads(fh.read())
+        prefix_cache = {}
+        for cidr, val in cidr_cache.iteritems():
+            prefix_cache[IntegerRange.from_cidr(cidr)] = val
+except:
+    prefix_cache = {}
+
+
+def flush_cache():
+    with open('whoiscache.json', 'w') as fh:
+        cidr_cache = dict((str(r), val) for r, val in prefix_cache.iteritems())
+        fh.write(json.dumps(cidr_cache))
+
+
+class IPInfo(object):
+    def __init__(self, ip_addr):
+        AS, IP, PREFIX, CC, REGISTRY, ALLOCATED, NAME = self.get_info(ip_addr)
+        self.AS = AS
+        self.ip = ip_addr
+        self.prefix = PREFIX
+        self.cc = CC
+        self.registry = REGISTRY
+        self.allocated = ALLOCATED
+        self.as_name = NAME
+
+    def get_info(self, ip_addr):
+        global prefix_cache
+        for range, info in prefix_cache.iteritems():
+            if range.contains(ip_to_int(ip_addr)):
+                return info
+        command = '/usr/bin/whois -h whois.cymru.com " -v %s"' % ip_addr
+        resp, err = subprocess.Popen(command, stdout=subprocess.PIPE, shell=True
+            ).communicate()
+        resp = resp.splitlines().pop()
+        parts = map(lambda x: x.strip(), resp.split('|')[0:7])
+        cidr = parts[2]
+        if '/' in cidr:
+            prefix_cache[IntegerRange.from_cidr(cidr)] = parts
+        else:
+            print "no cidr found in response for %s: %s" %(ip_addr, resp)
+            parts[0] = get_route_views_as(ip_addr)
+        flush_cache()
+        return parts
+
+    def __str__(self):
+        return json.dumps(
+            dict(AS=self.AS, IP=self.ip, PREFIX=self.prefix, CC=self.cc,
+                 REGISTRY=self.registry, ALLOCATED=self.allocated,
+                 AS_NAME=self.as_name)
+        )
+
+
 if __name__ == '__main__':
     build_bgp_table()
-    all_ip_integers = get_all_ip_integers('last10minutes.txt')
+    all_ip_integers = get_all_ip_integers(sys.argv[1])
     print "Number of flows: %s" % len(all_ip_integers)
     print "Sorting by IP"
     all_ip_integers.sort()
@@ -126,6 +200,13 @@ if __name__ == '__main__':
             print "%s in route %s from table %s" % (ip, route, table)
             good_ips.append(ip)
 
-    print "Illegal IPs: %s" % [int_to_ip(ip) for ip in illegal_ips]
+    illegal_info = [IPInfo(int_to_ip(ip)) for ip in illegal_ips]
+    print "Illegal IPs: %s" % map(str, illegal_info)
     print "Illegal IPs: %s" % len(illegal_ips)
     print "Good IPs: %s" % len(good_ips)
+    group_by_as = defaultdict(list)
+    for info in illegal_info:
+        group_by_as[info.AS].append(info)
+    for AS, info_list in group_by_as.iteritems():
+        print "AS: %s => %s entries" % (AS, len(info_list))
+    print "Bad AS count: %s" % len(group_by_as.keys())
