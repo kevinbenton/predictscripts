@@ -88,37 +88,42 @@ def is_ip_in_bgp_table(ip):
                 match_int, match_range = interface, range
                 break
     for interface, keys in to_pop.iteritems():
-        print ("flushing routes from interface %s\n%s"
+        msg = ("flushing routes from interface %s\n%s"
                % (interface, ['%s' % str(x) for x in
                               BGP_TABLE[interface][0:keys[-1]+1]]))
+        # print msg
         del BGP_TABLE[interface][0:keys[-1]+1]
     return match_int, match_range
 
 
+IP_TRAFFIC_PROTO = defaultdict(list)
 def get_all_ip_integers(flowfile):
+    global IP_TRAFFIC_PROTO
     all_ip_integers = []
     with open(flowfile, 'r') as fh:
         for line in fh:
             try:
+                ip, dip, proto = line.split()[0:3]
                 all_ip_integers.append(ip_to_int(line.split()[0]))
+                if (proto, dip) not in IP_TRAFFIC_PROTO[ip]:
+                    IP_TRAFFIC_PROTO[ip] = (proto, dip)
             except:
                 continue
     return all_ip_integers
 
 
-route_views_cache = {}
-
-
+ROUTE_VIEWS_CACHE = {}
 def get_route_views_as(ip):
-    global route_views_cache
+    global ROUTE_VIEWS_CACHE
     intip = ip_to_int(ip)
-    if not route_views_cache:
-        with open('routeviews-rv2-20140320-1200.pfx2as', 'r') as fh:
+    if not ROUTE_VIEWS_CACHE:
+        with open('additional_data/routeviews-rv2-20140320-1200.pfx2as',
+                  'r') as fh:
             for l in fh:
                 net, mask, AS = l.split()
-                route_views_cache[
+                ROUTE_VIEWS_CACHE[
                     IntegerRange.from_cidr('%s/%s' % (net, mask))] = AS
-    for r, AS in route_views_cache.iteritems():
+    for r, AS in ROUTE_VIEWS_CACHE.iteritems():
         if r.end < intip:
             return 'NA'
         if r.contains(intip):
@@ -127,18 +132,18 @@ def get_route_views_as(ip):
 
 
 try:
-    with open('whoiscache.json', 'r') as fh:
+    with open('additional_data/whoiscache.json', 'r') as fh:
         cidr_cache = json.loads(fh.read())
-        prefix_cache = {}
+        PREFIX_CACHE = {}
         for cidr, val in cidr_cache.iteritems():
-            prefix_cache[IntegerRange.from_cidr(cidr)] = val
+            PREFIX_CACHE[IntegerRange.from_cidr(cidr)] = val
 except:
-    prefix_cache = {}
+    PREFIX_CACHE = {}
 
 
 def flush_cache():
-    with open('whoiscache.json', 'w') as fh:
-        cidr_cache = dict((str(r), val) for r, val in prefix_cache.iteritems())
+    with open('additional_data/whoiscache.json', 'w') as fh:
+        cidr_cache = dict((str(r), val) for r, val in PREFIX_CACHE.iteritems())
         fh.write(json.dumps(cidr_cache))
 
 
@@ -152,10 +157,11 @@ class IPInfo(object):
         self.registry = REGISTRY
         self.allocated = ALLOCATED
         self.as_name = NAME
+        self.traffic_flows = IP_TRAFFIC_PROTO[ip_addr]
 
     def get_info(self, ip_addr):
-        global prefix_cache
-        for range, info in prefix_cache.iteritems():
+        global PREFIX_CACHE
+        for range, info in PREFIX_CACHE.iteritems():
             if range.contains(ip_to_int(ip_addr)):
                 return info
         command = '/usr/bin/whois -h whois.cymru.com " -v %s"' % ip_addr
@@ -165,9 +171,9 @@ class IPInfo(object):
         parts = map(lambda x: x.strip(), resp.split('|')[0:7])
         cidr = parts[2]
         if '/' in cidr:
-            prefix_cache[IntegerRange.from_cidr(cidr)] = parts
+            PREFIX_CACHE[IntegerRange.from_cidr(cidr)] = parts
         else:
-            print "no cidr found in response for %s: %s" % (ip_addr, resp)
+            print "no cidr found in response for %s: %s" %(ip_addr, resp)
             parts[0] = get_route_views_as(ip_addr)
         flush_cache()
         return parts
@@ -176,7 +182,7 @@ class IPInfo(object):
         return json.dumps(
             dict(AS=self.AS, IP=self.ip, PREFIX=self.prefix, CC=self.cc,
                  REGISTRY=self.registry, ALLOCATED=self.allocated,
-                 AS_NAME=self.as_name)
+                 AS_NAME=self.as_name, TRAFFIC_FLOWS=self.traffic_flows)
         )
 
 
@@ -195,17 +201,20 @@ if __name__ == '__main__':
         if ip == last:
             continue  # de-dup
         else:
-            last = ip
+           last = ip
         table, route = is_ip_in_bgp_table(ip)
         if not table:
-            print "ip did not match BGP entries: %s" % ip
+            nice_ip = int_to_ip(ip)
+            print "ip did not match BGP entries: %s" % nice_ip
+            print "protocols for ip %s: %s" % (nice_ip,
+                                               IP_TRAFFIC_PROTO[nice_ip])
             illegal_ips.append(ip)
         else:
-            print "%s in route %s from table %s" % (ip, route, table)
+            #print "%s in route %s from table %s" % (ip, route, table)
             good_ips.append(ip)
 
     illegal_info = [IPInfo(int_to_ip(ip)) for ip in illegal_ips]
-    print "Illegal IPs: %s" % map(str, illegal_info)
+    #print "Illegal IPs: %s" % map(str, illegal_info)
     print "Illegal IPs: %s" % len(illegal_ips)
     print "Good IPs: %s" % len(good_ips)
     group_by_as = defaultdict(list)
