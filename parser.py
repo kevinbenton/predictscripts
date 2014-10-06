@@ -91,14 +91,15 @@ def is_ip_in_bgp_table(ip):
         msg = ("flushing routes from interface %s\n%s"
                % (interface, ['%s' % str(x) for x in
                               BGP_TABLE[interface][0:keys[-1]+1]]))
-        # print msg
         del BGP_TABLE[interface][0:keys[-1]+1]
     return match_int, match_range
 
 
 IP_TRAFFIC_PROTO = defaultdict(list)
+RETURN_LIST = []
 def get_all_ip_integers(flowfile):
     global IP_TRAFFIC_PROTO
+    global RETURN_LIST
     all_ip_integers = []
     with open(flowfile, 'r') as fh:
         for line in fh:
@@ -107,6 +108,8 @@ def get_all_ip_integers(flowfile):
                 all_ip_integers.append(ip_to_int(line.split()[0]))
                 if (proto, dip) not in IP_TRAFFIC_PROTO[ip]:
                     IP_TRAFFIC_PROTO[ip] = (proto, dip)
+                if dip not in RETURN_LIST:
+                    RETURN_LIST.append(dip)
             except:
                 continue
     return all_ip_integers
@@ -124,8 +127,6 @@ def get_route_views_as(ip):
                 ROUTE_VIEWS_CACHE[
                     IntegerRange.from_cidr('%s/%s' % (net, mask))] = AS
     for r, AS in ROUTE_VIEWS_CACHE.iteritems():
-        if r.end < intip:
-            return 'NA'
         if r.contains(intip):
             return AS
     return 'NA'
@@ -158,6 +159,7 @@ class IPInfo(object):
         self.allocated = ALLOCATED
         self.as_name = NAME
         self.traffic_flows = IP_TRAFFIC_PROTO[ip_addr]
+        self.present_in_routeviews = get_route_views_as(ip_addr) != 'NA'
 
     def get_info(self, ip_addr):
         global PREFIX_CACHE
@@ -212,10 +214,11 @@ if __name__ == '__main__':
         else:
             #print "%s in route %s from table %s" % (ip, route, table)
             good_ips.append(ip)
-
     illegal_info = [IPInfo(int_to_ip(ip)) for ip in illegal_ips]
     #print "Illegal IPs: %s" % map(str, illegal_info)
     print "Illegal IPs: %s" % len(illegal_ips)
+    print "Illegal IPs present in routeviews: %s" % len(
+        [i for i in illegal_info if i.present_in_routeviews])
     print "Good IPs: %s" % len(good_ips)
     group_by_as = defaultdict(list)
     for info in illegal_info:
